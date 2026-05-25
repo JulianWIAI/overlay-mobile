@@ -1,43 +1,78 @@
 package com.example.overlay_mobile
 
 /**
- * Near-infrared camera simulation.
+ * Aerochrome false-colour near-infrared simulation.
  *
- * In real NIR photography the spectral sensitivity is inverted relative to
- * human vision: materials that strongly absorb visible light (dark bark, water)
- * appear dark, while materials that reflect NIR heavily (chlorophyll, skin)
- * appear bright.  The overall cast is warm red-orange.
+ * Real NIR photography (Kodak Aerochrome, drone multispectral imaging):
+ *   • Chlorophyll-rich vegetation reflects 800–1000 nm NIR strongly
+ *     → appears vivid CRIMSON / MAGENTA in false-colour composites.
+ *   • Clear sky and water absorb NIR
+ *     → appear deep INDIGO / DARK BLUE.
+ *   • Neutral surfaces (concrete, bare soil, skin)
+ *     → appear warm AMBER / ORANGE.
  *
- * Pipeline per pixel (zero allocation):
- *   1. Compute perceptual luma Y (Rec.601 integer coefficients).
- *   2. Invert: ir = 255 − Y  →  "hot" surfaces that absorbed visible light
- *      become bright in the IR image.
- *   3. Map through a warm-cast LUT:
- *        R′ = ir × 1.297  (clamped at 255) — dominant warm channel
- *        G′ = ir × 0.949
- *        B′ = ir × 0.602  — cool channel suppressed
+ * NIR reflectance proxy (estimated from visible channels, zero allocation):
+ *   nir = clamp( G×3/2 + R/3 − B×2/3,  0, 255 )
+ *   Green channel dominates (chlorophyll proxy); blue subtracts (sky/water
+ *   absorb NIR); red adds warmth (skin, warm soil).
  *
- * Integer approximation using multiply + unsigned-right-shift (no division):
- *   R′ = (ir × 332) ushr 8   ≈ ir × 1.297   (332 / 256 = 1.297)
- *   G′ = (ir × 243) ushr 8   ≈ ir × 0.949   (243 / 256 = 0.949)
- *   B′ = (ir × 154) ushr 8   ≈ ir × 0.602   (154 / 256 = 0.602)
- * R′ requires a final coerceAtMost(255) since 255 × 332 ushr 8 = 329.
+ * Visually distinct from Thermal (which maps LUMINANCE → heat palette).
+ * Here REFLECTANCE drives colour: a bright blue sky (high luma, low NIR)
+ * appears indigo while dark green vegetation (low luma, high NIR) appears
+ * crimson — the opposite of what Thermal would show.
+ *
+ * Output palette (piecewise linear, three stops):
+ *   nir =   0 → (  0,   0, 180)  deep indigo   — NIR-dark (sky / water)
+ *   nir = 128 → (200,  40,  60)  crimson        — NIR-mid  (mixed surfaces)
+ *   nir = 255 → (255, 160,  20)  amber-orange   — NIR-hot  (vegetation / skin)
  */
 class InfraredTransform : PixelTransform() {
 
+    // 256 × 3 bytes: [R₀, G₀, B₀, R₁, G₁, B₁, …]  — built once at construction
+    private val lut: ByteArray = ByteArray(768).also { buildPalette(it) }
+
     override fun transformInPlace(rgba: ByteArray) {
+        val l   = lut
         val len = rgba.size
         var i   = 0
         while (i < len) {
-            val r  = rgba[i    ].toInt() and 0xFF
-            val g  = rgba[i + 1].toInt() and 0xFF
-            val b  = rgba[i + 2].toInt() and 0xFF
-            val y  = (r * 299 + g * 587 + b * 114) / 1_000
-            val ir = 255 - y
-            rgba[i    ] = ((ir * 332) ushr 8).coerceAtMost(255).toByte()
-            rgba[i + 1] = ((ir * 243) ushr 8).toByte()
-            rgba[i + 2] = ((ir * 154) ushr 8).toByte()
+            val r = rgba[i    ].toInt() and 0xFF
+            val g = rgba[i + 1].toInt() and 0xFF
+            val b = rgba[i + 2].toInt() and 0xFF
+
+            // NIR reflectance proxy: high on vegetation/warm tones, low on sky/water.
+            val nir  = (g * 3 / 2 + r / 3 - b * 2 / 3).coerceIn(0, 255)
+            val base = nir * 3
+            rgba[i    ] = l[base    ]
+            rgba[i + 1] = l[base + 1]
+            rgba[i + 2] = l[base + 2]
             i += 4
         }
+    }
+
+    companion object {
+        // (nir_value, R, G, B) key-point stops for the NIR palette.
+        private val STOPS = arrayOf(
+            intArrayOf(  0,   0,   0, 180),   // deep indigo — NIR-dark (sky / water)
+            intArrayOf(128, 200,  40,  60),   // crimson     — NIR-mid  (mixed surfaces)
+            intArrayOf(255, 255, 160,  20),   // amber       — NIR-hot  (vegetation / skin)
+        )
+
+        fun buildPalette(lut: ByteArray) {
+            val stops = STOPS
+            for (nir in 0..255) {
+                var s = 0
+                while (s < stops.size - 2 && stops[s + 1][0] <= nir) s++
+                val n0 = stops[s][0]; val n1 = stops[s + 1][0]
+                val t  = if (n1 == n0) 0f else (nir - n0).toFloat() / (n1 - n0)
+                val base = nir * 3
+                lut[base    ] = lerp(stops[s][1], stops[s + 1][1], t)
+                lut[base + 1] = lerp(stops[s][2], stops[s + 1][2], t)
+                lut[base + 2] = lerp(stops[s][3], stops[s + 1][3], t)
+            }
+        }
+
+        private fun lerp(a: Int, b: Int, t: Float): Byte =
+            (a + (b - a) * t).toInt().coerceIn(0, 255).toByte()
     }
 }

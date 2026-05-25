@@ -47,10 +47,16 @@ class OverlayRenderer(private val context: Context) {
 
     companion object {
         /** Pixel alpha for every rendered frame: 128/255 = 50 % opaque.
-         *  Stability bound: for any matrix coefficient c, the feedback loop
-         *  converges iff (OVERLAY_ALPHA/255) × c < 1.  Our highest coefficient
-         *  is 1.6 (BEE, FROG); 128/255 × 1.6 = 0.80 < 1 → all modes stable.
-         *  At 50 % the filter effect is clearly visible and UI stays legible. */
+         *
+         *  Stability: feedback loop converges iff α × ρ(M) < 1.
+         *    All redesigned matrices are row-stochastic → ρ ≤ 1.0 → 0.502 < 1.
+         *    UV spectral radius ≈ 1.52 → 0.502 × 1.52 = 0.763 < 1.
+         *    Eagle centre boost max 1.50 → 0.502 × 1.50 = 0.753 < 1.
+         *
+         *  Ghost decay: moving objects leave a temporal trail that fades as
+         *    α^n per frame.  At α = 0.502: <5 % after 4 frames (133 ms at 30 fps).
+         *    Higher α amplifies this artifact — do not raise above 160 without
+         *    verifying ghost persistence on fast-motion content (video, swipe). */
         private const val OVERLAY_ALPHA = 128
     }
 

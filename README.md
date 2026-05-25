@@ -17,25 +17,25 @@ Eighteen vision modes are included, covering animal dichromacy/tetrachromacy, hu
 | # | Name | Description |
 |---|------|-------------|
 | 1 | **Normal** | Passthrough — overlay inactive |
-| 2 | **Dog** | S + L dichromacy (blue-yellow axis, ~440/555 nm) |
-| 3 | **Cat** | Dichromacy + peripheral Gaussian blur |
-| 4 | **Bull** | Pure blue-yellow axis, red/green conflated |
-| 5 | **Bee** | UV-shifted trichromacy (350/440/540 nm receptors) |
-| 6 | **Frog** | Cold-hue high-contrast with rod-bloom amplification |
-| 7 | **Eagle** | Foveal contrast enhancement + UV bias |
-| 8 | **Protanopia** | Red-blind (Viénot 1999) |
-| 9 | **Deuteranopia** | Green-blind (Viénot 1999) |
-| 10 | **Tritanopia** | Blue-blind (Viénot 1999) |
-| 11 | **Mono** | Luminance greyscale |
-| 12 | **Invert** | Photographic negative |
-| 13 | **Thermal** | Iron-palette heat map |
-| 14 | **Night** | Phosphor-green image-intensifier simulation |
-| 15 | **Echo** | Sobel-edge → blue-cyan gradient (echolocation) |
-| 16 | **IR** | Near-infrared warm-inverted palette |
-| 17 | **UV** | Spectrum-shifted UV trichromacy |
-| 18 | **Hi-Con** | 4×4 tile CLAHE-style local contrast enhancement |
+| 2 | **Dog** | Dichromat (S ~440 nm + L ~560 nm): reds appear dark brownish, greens shift yellow, blues vivid |
+| 3 | **Cat** | Dichromat + dominant UV/blue S-cone + peripheral box blur (horizontal-streak fovea) |
+| 4 | **Bull** | Extreme dichromacy: red objects nearly vanish (bulls react to motion, not red) |
+| 5 | **Bee** | Spectrum-shifted trichromacy (L=green, M=blue, UV S-cone proxy=indigo); human red invisible |
+| 6 | **Frog** | Tetrachromat green-world: vivid pond greens, elevated blues/UV, warm reds suppressed |
+| 7 | **Eagle** | Foveal hyper-vivid centre (R×1.4, G×1.2, B×1.5 UV-bias) + dimmed periphery |
+| 8 | **Protanopia** | L-cone absent: red objects appear notably dark (reduced long-wave luminance) |
+| 9 | **Deuteranopia** | M-cone absent: reds and greens both appear orange/yellowish — equal confusion |
+| 10 | **Tritanopia** | S-cone absent: blues map to green — sky and water appear teal/cyan |
+| 11 | **Mono** | Near-greyscale via complement targeting (corrects for 63 % alpha blend math) |
+| 12 | **Invert** | 120° hue rotation (R→G→B→R): red→purple, green→olive, blue→teal |
+| 13 | **Thermal** | Iron-palette heat map driven by luminance (cold=black/violet, hot=yellow/white) |
+| 14 | **Night** | Phosphor-green image-intensifier simulation (AN/PVS-14 P31/P43 tube) |
+| 15 | **Echo** | Sobel-edge → blue-cyan gradient on near-black (bat/dolphin echolocation) |
+| 16 | **IR** | Aerochrome false-colour NIR: vegetation → crimson, sky/water → indigo, skin → amber |
+| 17 | **UV** | Spectrum-shifted UV trichromacy (green→red, blue→green, UV proxy→violet) |
+| 18 | **Hi-Con** | 4×4 tile CLAHE-style adaptive local contrast enhancement |
 
-Matrix sources: Jacobs 1993, Neitz & Neitz 2011, Viénot et al. 1999, Chittka & Menzel 1992.
+Matrix sources: Jacobs 1993, Neitz & Neitz 2011, Viénot et al. 1999 (amplified for overlay visibility), Chittka & Menzel 1992.
 
 ---
 
@@ -110,7 +110,7 @@ Flutter UI (Dart)
 
 ### Key design decisions
 
-**Feedback-loop stabilisation** — The VirtualDisplay mirrors every SurfaceFlinger layer including the overlay itself. Rendering pixels at `OVERLAY_ALPHA = 128` (50 %) keeps the recursive capture stable: for any linear matrix *M* the fixed point is *F = (I − αM)⁻¹ · (1−α) · M · real*, which converges for all matrices whose maximum eigenvalue satisfies *λ < 1/α = 2.0*. Our highest coefficient is 1.6 (BEE, FROG) so the loop is stable with margin.
+**Feedback-loop stabilisation** — The VirtualDisplay mirrors every SurfaceFlinger layer including the overlay itself. Rendering pixels at `OVERLAY_ALPHA = 128` (50 %) keeps the recursive capture stable: for any linear matrix *M* the fixed point is *F = (I − αM)⁻¹ · (1−α) · M · real*, which converges for all matrices whose spectral radius satisfies *ρ(M) < 1/α = 2.0*. All redesigned matrices are row-stochastic (*ρ ≤ 1.0*); UV has *ρ ≈ 1.52* and Eagle's blue boost is capped at 1.50 — both well within margin. **Ghost decay**: at α = 0.502, a temporal trail from a moving object fades to < 5 % after 4 frames (≈133 ms at 30 fps). Raising alpha increases trail persistence — do not exceed 160 without testing on video.
 
 **Canvas clearing** — `lockHardwareCanvas()` returns triple-buffer slots that retain previous content. Every frame begins with `canvas.drawColor(0, PorterDuff.Mode.CLEAR)` to prevent semi-transparent pixels accumulating into an opaque layer.
 

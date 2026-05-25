@@ -25,11 +25,15 @@ class CatVisionTransform : PixelTransform() {
 
     // Colour matrix embedded here so the scratch-buffer lifetime matches
     // the transform instance, not a separate MatrixTransform singleton.
+    //
+    // Distinct from DOG: identical R'/G' rows (dichromat), but the B' row
+    // carries much stronger S-cone / UV sensitivity (cats perceive some UV
+    // up to ~380 nm).  Row sums = 1.0; ρ(M) ≤ 1.0; stable at any α < 1.
     private val matrixTransform = MatrixTransform(
         floatArrayOf(
-            0.500f, 0.500f, 0.000f,   // R' — dichromatic L/S mix
-            0.650f, 0.350f, 0.000f,   // G' — L-cone dominant
-            0.000f, 0.170f, 0.830f,   // B' — strong S-cone (UV sensitivity)
+            0.120f, 0.760f, 0.120f,   // R' — yellow axis (low R = reds dim)
+            0.120f, 0.760f, 0.120f,   // G' — identical → R/G indistinguishable
+            0.000f, 0.050f, 0.950f,   // B' — dominant S-cone/UV (cats see near-UV vividly)
         )
     )
 

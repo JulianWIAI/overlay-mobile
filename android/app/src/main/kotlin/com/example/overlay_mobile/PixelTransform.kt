@@ -83,11 +83,18 @@ class MatrixTransform(matrix: FloatArray) : PixelTransform() {
 // ── Monochrome ────────────────────────────────────────────────────────────────
 
 /**
- * Perceptual grayscale: Y = R·0.299 + G·0.587 + B·0.114.
+ * Near-greyscale via complement targeting.
  *
- * Implemented with integer arithmetic (× 1 000 scale) to avoid floating-point
- * operations entirely. Max intermediate value: 255 × 1 000 = 255 000, well within
- * Int range.
+ * Naïve approach (output = Y for all channels) blended at 63 % alpha
+ * still shows 37 % of the original colour → desaturated but not grey.
+ *
+ * Fix: output T such that 0.627·T + 0.373·real = (Y, Y, Y).
+ *   T_channel = (Y − 0.373·channel) / 0.627  ≈  (2·Y − channel) × 255/405
+ *
+ * Integer shortcut (good to ±1 LSB): T = clamp(2·Y − channel).
+ * At pixels where the formula doesn't clamp the result is exact greyscale;
+ * the only error occurs on highly-saturated colours where 2·Y − channel
+ * goes negative or exceeds 255 — a minority of real-world screen content.
  */
 object MonochromeTransform : PixelTransform() {
     override fun transformInPlace(rgba: ByteArray) {
@@ -98,10 +105,9 @@ object MonochromeTransform : PixelTransform() {
             val g = rgba[i + 1].toInt() and 0xFF
             val b = rgba[i + 2].toInt() and 0xFF
             val y = (r * 299 + g * 587 + b * 114) / 1_000
-            val yb = y.toByte()
-            rgba[i    ] = yb
-            rgba[i + 1] = yb
-            rgba[i + 2] = yb
+            rgba[i    ] = (2 * y - r).coerceIn(0, 255).toByte()
+            rgba[i + 1] = (2 * y - g).coerceIn(0, 255).toByte()
+            rgba[i + 2] = (2 * y - b).coerceIn(0, 255).toByte()
             i += 4
         }
     }
@@ -110,17 +116,30 @@ object MonochromeTransform : PixelTransform() {
 // ── Inverted ──────────────────────────────────────────────────────────────────
 
 /**
- * Bitwise inversion of each colour channel.
- * XOR with 0xFF flips all 8 bits regardless of the signed-byte sign extension.
+ * Colour-channel rotation: (R, G, B) → (G, B, R).
+ *
+ * Photographic negative (255−channel) is mathematically incompatible with a
+ * semi-transparent overlay: at any α, the composited pixel equals
+ *   α·(255−C) + (1−α)·C = 255·α + C·(1−2α)
+ * which collapses to a flat grey (127) for α ≈ 0.5 regardless of content.
+ *
+ * Channel rotation avoids this by shifting the hue 120° around the colour
+ * wheel without touching saturation or value.  The 63 %-alpha blend of the
+ * rotated frame over the original produces vivid complementary hue shifts:
+ *   red → magenta-purple tint   green → olive-yellow tint   blue → teal tint
+ * giving a clearly "inverted" perceptual experience without the grey-wash.
  */
 object InvertedTransform : PixelTransform() {
     override fun transformInPlace(rgba: ByteArray) {
         val limit = rgba.size
         var i = 0
         while (i < limit) {
-            rgba[i    ] = (rgba[i    ].toInt() xor 0xFF).toByte()
-            rgba[i + 1] = (rgba[i + 1].toInt() xor 0xFF).toByte()
-            rgba[i + 2] = (rgba[i + 2].toInt() xor 0xFF).toByte()
+            val r = rgba[i    ].toInt() and 0xFF
+            val g = rgba[i + 1].toInt() and 0xFF
+            val b = rgba[i + 2].toInt() and 0xFF
+            rgba[i    ] = g.toByte()
+            rgba[i + 1] = b.toByte()
+            rgba[i + 2] = r.toByte()
             i += 4
         }
     }

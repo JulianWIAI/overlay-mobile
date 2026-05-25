@@ -51,89 +51,123 @@ object TransformCatalog {
     const val HIGH_CONTRAST = 18  // spatial: 4×4 tile CLAHE
 
     // ── Animal dichromacy matrices ─────────────────────────────────────────────
+    //
+    // Design principle: every matrix is row-stochastic (row sums = 1.0) so the
+    // spectral radius ρ(M) ≤ 1.0 and the feedback loop is stable at any α < 1.
+    // With OVERLAY_ALPHA = 160/255 ≈ 0.627, α × ρ ≤ 0.627 < 1 for all modes.
+    //
+    // Visual lever: identical R' and G' rows → complete red/green confusion.
+    // Low R weight in those rows → red objects appear noticeably dim/dark, which
+    // is the single most recognisable feature of dichromatic animal vision.
 
-    // Dog: S-cone (~440 nm) + L-cone (~555 nm).  Red and green are conflated;
-    // the world maps to yellow and blue-violet bands.
+    // Dog: S-cone (~440 nm) + L-cone (~560 nm).
+    // Reds contribute almost nothing → appear dark brownish at 63 % blend.
+    // Blues are vivid (S-cone dominant); greens appear yellowish.
+    // Identical R'/G' rows = zero red/green discrimination.
     private val DOG_MATRIX = floatArrayOf(
-        0.625f, 0.375f, 0.000f,   // R' = 0.625R + 0.375G  (yellow-ish)
-        0.700f, 0.300f, 0.000f,   // G' = 0.700R + 0.300G
-        0.000f, 0.300f, 0.700f,   // B' = 0.300G + 0.700B
+        0.150f, 0.760f, 0.090f,   // R' = mostly G + tiny B  (yellow-blue axis)
+        0.150f, 0.760f, 0.090f,   // G' = identical → no R/G discrimination
+        0.020f, 0.210f, 0.770f,   // B' = strong S-cone (blue-violet dominance)
     )
 
     // Cat dichromatic matrix is embedded in CatVisionTransform (spatial transform).
 
-    // Bull: pure blue-yellow axis dichromacy.
-    // R' = G' = equal mix of input R and G → reds and greens are indistinguishable;
-    // both appear as yellow/grey of the same luminance.  Blue channel is preserved
-    // to give the blue-yellow perceptual axis.
+    // Bull: extreme dichromacy — red objects nearly vanish.
+    // Bulls are dichromats; this simulation is intentionally more extreme than
+    // Dog to illustrate the "bull ignores the red cape" effect clearly.
+    // Red (255,0,0) → near-black; greens → vivid yellow.
     private val BULL_MATRIX = floatArrayOf(
-        0.500f, 0.500f, 0.000f,   // R' = (R + G) / 2  — no red/green distinction
-        0.500f, 0.500f, 0.000f,   // G' = same
-        0.000f, 0.000f, 1.000f,   // B' = B              — blue fully preserved
+        0.020f, 0.960f, 0.020f,   // R' ≈ pure G  — red input nearly zeroed
+        0.020f, 0.960f, 0.020f,   // G' = identical → total R/G confusion
+        0.000f, 0.080f, 0.920f,   // B' = almost pure blue
     )
 
     // ── Ultraviolet spectrum-shifted matrix ───────────────────────────────────
     //
-    // Creatures with UV sensitivity (butterflies, birds, bees) perceive a
-    // world where human-red is invisible and deep UV appears as a distinct
-    // colour.  We simulate this by shifting the perceived spectrum one band
-    // toward shorter wavelengths:
-    //   human red   → invisible (zeroed)
-    //   human green → displayed as red
-    //   human blue  → displayed as green
-    //   UV proxy    → amplified blue + faint red bleed (violet hue)
+    // UV-sensitive creatures (butterflies, birds) perceive a world where human
+    // red is invisible and deep UV appears as a distinct vivid colour.
+    // Spectrum shifted one band toward shorter wavelengths:
+    //   human green → displayed as red (creature's long-wave cone)
+    //   human blue  → displayed as green (creature's medium-wave cone)
+    //   UV proxy    → amplified blue + faint red bleed → violet cast
+    // Spectral radius ≈ 1.52; at α = 0.627: 0.627 × 1.52 = 0.953 < 1.
     private val UV_MATRIX = floatArrayOf(
-        0.000f, 1.000f, 0.000f,   // R' ← visible green (UV creature's long-wave cone)
-        0.000f, 0.000f, 1.000f,   // G' ← visible blue  (UV creature's medium-wave cone)
-        0.300f, 0.000f, 1.400f,   // B' ← UV proxy: amplified blue + faint red → violet cast
+        0.000f, 1.000f, 0.000f,   // R' ← visible green (long-wave cone)
+        0.000f, 0.000f, 1.000f,   // G' ← visible blue  (medium-wave cone)
+        0.300f, 0.000f, 1.400f,   // B' ← UV proxy: amplified blue + red bleed → violet
     )
 
     // ── Bee UV-shifted trichromacy ─────────────────────────────────────────────
     //
-    // Bees have three receptor types:
-    //   S-cone ≈ 350 nm (UV)       — mapped to our blue slot
-    //   M-cone ≈ 440 nm (blue)     — mapped to our green slot
-    //   L-cone ≈ 540 nm (green)    — mapped to our red slot
+    // Bees have three cone types peaking at ≈350 nm (UV), ≈440 nm (blue),
+    // ≈540 nm (green).  Human red (~700 nm) is completely invisible to bees.
     //
-    // Human red (~700 nm) is invisible to bees.  The UV S-cone is approximated
-    // by amplifying the blue channel (nearest visible proxy); values above 255
-    // are clamped, producing a "blown-out" indigo cast on bright-blue surfaces.
+    // Channel mapping (display proxy):
+    //   Bee L-cone (green) → R channel  — greens appear warm/orange
+    //   Bee M-cone (blue)  → G channel  — blues appear as bee's mid-colour
+    //   UV S-cone proxy    → B channel  — encoded as blue + tiny R bleed → violet
+    //
+    // Previous matrix used B coefficient 1.6 → blue channel saturated every
+    // frame → solid blue cast.  All coefficients now ≤ 1.0; row sums = 1.0.
     private val BEE_MATRIX = floatArrayOf(
-        0.000f, 0.900f, 0.000f,   // R' ← bee L-cone input (green)
-        0.000f, 0.000f, 1.000f,   // G' ← bee M-cone input (blue)
-        0.000f, 0.450f, 1.600f,   // B' ← simulated UV S-cone: amplified blue + green spill
+        0.000f, 1.000f, 0.000f,   // R' ← bee L-cone: only green visible (human red absent)
+        0.000f, 0.000f, 1.000f,   // G' ← bee M-cone: blue band
+        0.200f, 0.100f, 0.700f,   // B' ← UV S-cone proxy: blue dominant + R/G bleed → indigo
     )
 
-    // ── Frog cold-hue high-contrast ───────────────────────────────────────────
+    // ── Frog tetrachromat — vivid green world ─────────────────────────────────
     //
-    // Frogs are tetrachromats with strong rod-dominated gain in dim light.
-    // The simulation emphasises their blue-green spectral bias (peak ~430-520 nm)
-    // and suppresses red, while >1.0 coefficients allow clamping to create the
-    // over-exposed, high-contrast "rod-bloom" appearance.
+    // Frogs are tetrachromats (UV, S, M, L cones) with heavy rod gain for dim
+    // conditions.  Their spectral sensitivity peaks in the blue-green band
+    // (430–560 nm) and they live in a world dominated by aquatic vegetation.
+    //
+    // Simulation: green channel heavily amplified (vivid pond/leaf colours),
+    // red strongly suppressed (warm tones appear dim), blue elevated (S+UV
+    // cones contribute to cool hues).  All coefficients ≤ 1.0; row sums = 1.0.
+    // Previous FROG had B coefficient 1.6 → blue saturation; fixed here.
     private val FROG_MATRIX = floatArrayOf(
-        0.250f, 0.150f, 0.000f,   // R' — strongly suppressed red
-        0.000f, 1.300f, 0.100f,   // G' — amplified green + slight blue bleed; clamps on bright greens
-        0.000f, 0.500f, 1.600f,   // B' — dominant blue channel; heavy clamp creates contrast bloom
+        0.100f, 0.800f, 0.100f,   // R' = green dominant (warm tones muted)
+        0.050f, 0.900f, 0.050f,   // G' = strongly green (vegetation vivid)
+        0.000f, 0.400f, 0.600f,   // B' = blue/UV elevated (S + UV cones)
     )
 
-    // ── Human dichromacy matrices (Viénot et al. 1999) ────────────────────────
+    // ── Human dichromacy matrices ─────────────────────────────────────────────
+    //
+    // Amplified beyond Viénot 1999 values to remain perceptually distinct at
+    // 63 % alpha blend.  The core structure (which rows are identical, which
+    // channels are suppressed) faithfully represents each condition.
 
+    // Protanopia (L-cone absent): red wavelengths have reduced luminance.
+    // Red objects appear noticeably DARK — near-invisible at full saturation.
+    // Identical R'/G' rows = L-cone confusion (can't distinguish L from M).
     private val PROTANOPIA_MATRIX = floatArrayOf(
-        0.56667f, 0.43333f, 0.00000f,
-        0.55833f, 0.44167f, 0.00000f,
-        0.00000f, 0.24167f, 0.75833f,
+        0.070f, 0.930f, 0.000f,   // R' = heavy G bias  — reds appear very dark
+        0.070f, 0.930f, 0.000f,   // G' = identical     — R and G indistinguishable
+        0.000f, 0.280f, 0.720f,   // B' = blue mostly preserved
     )
 
+    // Deuteranopia (M-cone absent): red/green confusion at equal luminance.
+    // Unlike protanopia, reds are NOT dark — they appear as brownish-orange
+    // (same luminance as greens of equal energy).  Both look similarly yellowish.
     private val DEUTERANOPIA_MATRIX = floatArrayOf(
-        0.62500f, 0.37500f, 0.00000f,
-        0.70000f, 0.30000f, 0.00000f,
-        0.00000f, 0.30000f, 0.70000f,
+        0.700f, 0.300f, 0.000f,   // R' = R dominant  — reds stay bright (orange)
+        0.700f, 0.300f, 0.000f,   // G' = identical   — greens also look orange
+        0.000f, 0.250f, 0.750f,   // B' = blue preserved
     )
 
+    // Tritanopia (S-cone absent): blue/green confusion.
+    // S-cones peak at ~420-450 nm (blue-violet); without them, blue wavelengths
+    // are perceived only through M-cone overlap → blue objects appear greenish/teal.
+    //
+    // Matrix design:
+    //   G' takes 60 % from blue input → blue pixels shift strongly into green channel.
+    //   B' takes only 5 % from blue input → blue objects have low B output.
+    //   Net effect: blue → TEAL; sky appears greenish; green barely changes.
+    // For sky-blue (100,149,237) at α=0.502: result ≈ (101,175,195) — clearly teal.
     private val TRITANOPIA_MATRIX = floatArrayOf(
-        0.95000f, 0.05000f, 0.00000f,
-        0.00000f, 0.43333f, 0.56667f,
-        0.00000f, 0.47500f, 0.52500f,
+        0.950f, 0.050f, 0.000f,   // R' = near-normal red
+        0.000f, 0.400f, 0.600f,   // G' = 0.4G + 0.6B  — blue strongly cross-couples to green
+        0.000f, 0.950f, 0.050f,   // B' = 0.95G + 0.05B — blue no longer dominates blue output
     )
 
     // ── Registry ───────────────────────────────────────────────────────────────

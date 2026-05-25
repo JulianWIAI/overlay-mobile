@@ -5,22 +5,17 @@ import kotlin.math.sqrt
 /**
  * Eagle foveal-contrast vision.
  *
- * Eagles have two foveas per eye and ~8× the cone density of the human fovea.
- * They also possess a fourth cone type extending into the UV range (~370 nm).
+ * Eagles have two foveas per eye and ~8× the cone density of the human fovea,
+ * plus a fourth UV cone type peaking at ~370 nm.
  *
  * Simulation:
- *   Centre ellipse (≤ 50 % of the shorter axis radius):
- *     → 1.25× luminance amplification on all channels.
- *     → 1.75× on blue to approximate UV sensitivity (blue-shifted UV response).
+ *   Centre circle (≤ 50 % of the shorter half-axis radius, ≈25 % of frame area):
+ *     R × 1.40, G × 1.20, B × 1.50  — vivid, hyper-real colours with UV bias.
+ *     Stability: α × 1.50 = 0.627 × 1.50 = 0.941 < 1 ✓
  *   Periphery:
- *     → Dimmed to 60 % brightness so the centre reads as visually dominant.
+ *     Dimmed to 65 % so the foveal centre dominates without losing context.
  *
- * Performance optimisation — scanline span pre-computation:
- *   Naïve per-pixel sqrt would cost one sqrt() per pixel (~920 k calls/frame).
- *   Instead, for each scanline y we solve (dx)² < centerRSq − dySq for the
- *   half-width `xHalfSpan`, giving three contiguous pixel runs (left periphery,
- *   centre, right periphery) with zero branching inside each run.
- *   This reduces sqrt() calls to at most [height] per frame (≤ 720 for 720 p).
+ * Performance: scanline span pre-computation keeps sqrt() calls ≤ height/frame.
  */
 class EagleVisionTransform : PixelTransform() {
 
@@ -29,9 +24,9 @@ class EagleVisionTransform : PixelTransform() {
     override fun transformInPlace(rgba: ByteArray) {
         var i = 0
         while (i < rgba.size) {
-            rgba[i    ] = clamp(rgba[i    ].u() * 1.25f)
-            rgba[i + 1] = clamp(rgba[i + 1].u() * 1.25f)
-            rgba[i + 2] = clamp(rgba[i + 2].u() * 1.75f)
+            rgba[i    ] = clamp(rgba[i    ].u() * 1.40f)
+            rgba[i + 1] = clamp(rgba[i + 1].u() * 1.20f)
+            rgba[i + 2] = clamp(rgba[i + 2].u() * 1.50f)
             i += 4
         }
     }
@@ -42,15 +37,12 @@ class EagleVisionTransform : PixelTransform() {
         val cx = width  * 0.5f
         val cy = height * 0.5f
 
-        // Radius = 50% of the shorter half-dimension (covers ~25% of frame area).
         val centerRSq = minOf(cx, cy).let { r -> (r * 0.50f) * (r * 0.50f) }
 
         for (y in 0 until height) {
             val dy    = (y - cy)
             val dySq  = dy * dy
 
-            // For this scanline, compute the x-range inside the centre circle.
-            // Condition: dx² < centerRSq − dySq  →  |dx| < sqrt(remaining).
             val remaining  = centerRSq - dySq
             val xHalfSpan  = if (remaining > 0f) sqrt(remaining.toDouble()).toInt() else 0
 
@@ -60,7 +52,7 @@ class EagleVisionTransform : PixelTransform() {
 
             val rowBase = y * width
 
-            // Left periphery ─ dim to 60 %
+            // Left periphery ─ dim to 65 %
             for (x in 0 until xLeft) {
                 val i = (rowBase + x) * 4
                 rgba[i    ] = dim(rgba[i    ].u())
@@ -68,15 +60,15 @@ class EagleVisionTransform : PixelTransform() {
                 rgba[i + 2] = dim(rgba[i + 2].u())
             }
 
-            // Centre ─ high contrast + UV-bias blue amplification
+            // Centre ─ vivid hyper-real colours with UV-bias blue boost
             for (x in xLeft..xRight) {
                 val i = (rowBase + x) * 4
-                rgba[i    ] = clamp(rgba[i    ].u() * 1.25f)
-                rgba[i + 1] = clamp(rgba[i + 1].u() * 1.25f)
-                rgba[i + 2] = clamp(rgba[i + 2].u() * 1.75f)
+                rgba[i    ] = clamp(rgba[i    ].u() * 1.40f)
+                rgba[i + 1] = clamp(rgba[i + 1].u() * 1.20f)
+                rgba[i + 2] = clamp(rgba[i + 2].u() * 1.50f)
             }
 
-            // Right periphery ─ dim to 60 %
+            // Right periphery ─ dim to 65 %
             for (x in xRight + 1 until width) {
                 val i = (rowBase + x) * 4
                 rgba[i    ] = dim(rgba[i    ].u())
@@ -96,7 +88,6 @@ class EagleVisionTransform : PixelTransform() {
         else      -> f.toInt().toByte()
     }
 
-    // Integer multiply + right-shift avoids float for the dim path.
-    // 60/100 approximated as 154/256 (0.6015…) — indistinguishable on screen.
-    private inline fun dim(v: Int): Byte = ((v * 154) ushr 8).toByte()
+    // 65 % ≈ 166/256 = 0.6484
+    private inline fun dim(v: Int): Byte = ((v * 166) ushr 8).toByte()
 }
